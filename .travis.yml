@@ -1,0 +1,11 @@
+sudo: false
+dist: trusty
+language: go
+go:
+  - 1.10.x
+  - tip
+
+# counterintuitive, but this actually _disables_ the install phase
+install: true
+
+script: make validate-hashes

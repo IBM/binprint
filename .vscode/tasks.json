@@ -1,0 +1,28 @@
+{
+    // See https://go.microsoft.com/fwlink/?LinkId=733558
+    // for the documentation about the tasks.json format
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build",
+            "type": "shell",
+            "command": "make",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            "label": "unused",
+            "type": "shell",
+            "command": "unused ./...",
+            "options": {
+                "cwd": "${workspaceRoot}",
+                "env": {
+                    "PKG_CONFIG_PATH": "${workspaceRoot}/vendor/gopkg.in/libgit2/git2go.v27/vendor/libgit2/build"
+                }
+            },
+            "group": "test"
+        },
+    ]
+}

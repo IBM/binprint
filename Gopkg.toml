@@ -1,0 +1,24 @@
+[prune]
+  go-tests = true
+  unused-packages = true
+  [[prune.project]]
+    name = "github.com/opencontainers/runc" # necessary so we don't prune the stubbed API for non-Linux builds
+    unused-packages = false
+
+[[constraint]]
+  name = "github.com/blakesmith/ar"
+  source = "github.com/RIscRIpt/ar"
+  revision = "83930f3583bc95a61f1aef98979c0a73148bb9fb"
+
+[[constraint]]
+  name = "github.com/spf13/cobra"
+  version = "0.0.2"
+
+[[constraint]]
+  name = "gopkg.in/libgit2/git2go.v27"
+  source = "github.com/rmg/git2go"
+  branch = "moar-static"
+
+[[constraint]]
+  name = "github.com/opencontainers/runc"
+  version = "1.0.0-rc5"

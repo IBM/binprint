@@ -1,0 +1,6 @@
+{
+    "go.toolsEnvVars": {
+        "PKG_CONFIG_PATH": "${workspaceRoot}/vendor/gopkg.in/libgit2/git2go.v27/vendor/libgit2/build"
+    },
+    "go.buildTags": "static"
+}
