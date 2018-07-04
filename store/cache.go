@@ -4,9 +4,6 @@
 package store
 
 import (
-	"bytes"
-	"encoding/gob"
-	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -14,19 +11,12 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/golang/snappy"
 	"github.com/hashicorp/golang-lru"
-	"github.com/sirupsen/logrus"
 	"github.com/steakknife/bloomfilter"
-	prefixed "github.com/x-cray/logrus-prefixed-formatter"
-	"gopkg.in/yaml.v2"
 
 	"github.com/IBM/binprint/hash"
 	"github.com/IBM/binprint/record"
 )
-
-// specify whether to treat the gob serialization as the canonical form or not.
-var useGob = false
 
 // CachedStatFingerprintKey is an opaque key generated from the stat info of a file.
 type CachedStatFingerprintKey string
@@ -45,244 +35,12 @@ type fingerprintInMemoryCache struct {
 	statCache        *lru.ARCCache
 }
 
-// SerializedCache is an alternative representation of fingerprintInMemoryCache that uses
-// numeric IDs in place of pointers. Other than creating the serialized struct from an existing
-// fingerprintInMemoryCache, it is directly serializable using the defaults for more or less
-// any encoding format desired
-type SerializedCache struct {
-	Fingerprints []record.SerializedFingerprint
-	Files        []record.SerializedFile
-	Archives     []record.SerializedArchiveFile
-	Repos        []record.SerializedGitRepo
-	StatCache    map[CachedStatFingerprintKey]uint64
-}
-
-// NewSerializedCache creates a new serializable copy of the current cache
-func (v *fingerprintInMemoryCache) NewSerializedCache() *SerializedCache {
-	v.fingerprintsLock.Lock()
-	defer v.fingerprintsLock.Unlock()
-	v.filesLock.Lock()
-	defer v.filesLock.Unlock()
-	v.archivesLock.Lock()
-	defer v.archivesLock.Unlock()
-	v.reposLock.Lock()
-	defer v.reposLock.Unlock()
-
-	onDisk := SerializedCache{
-		Fingerprints: make([]record.SerializedFingerprint, len(v.Fingerprints)),
-		Files:        make([]record.SerializedFile, len(v.Files)),
-		Archives:     make([]record.SerializedArchiveFile, len(v.ArchiveFiles)),
-		Repos:        make([]record.SerializedGitRepo, len(v.GitRepoSources)),
-		StatCache:    make(map[CachedStatFingerprintKey]uint64, v.statCache.Len()),
-	}
-
-	// 1. encode the fingerprints as-is, but as a map instead of a list since we're using the
-	// slice index as a key already and so we want to make it more official
-	for i, f := range v.Fingerprints {
-		id := uint64(i)
-		onDisk.Fingerprints[i] = record.SerializedFingerprint{
-			Fingerprint: *f,
-			ID:          id,
-		}
-		// onDisk.Fingerprints[uint64(i)] = f
-	}
-
-	// 2. encode the files, they reference fingerprints and need mapping
-	for i, f := range v.Files {
-		// log.Printf("Storing file %s (%d) as %d\n", f.Path, f.CacheID(), i)
-		onDisk.Files[i] = record.SerializedFile{
-			ID:          f.CacheID(),
-			Path:        f.Path,
-			Fingerprint: f.Fingerprint.CacheID(),
-		}
-	}
-
-	// 3. encode the archives, they join files to other files
-	for i, a := range v.ArchiveFiles {
-		id := uint64(i)
-		archive := record.SerializedArchiveFile{
-			ID:   id,
-			File: a.File.CacheID(),
-		}
-		archive.Entries = make([]uint64, len(a.Entries))
-		for ii, ep := range a.Entries {
-			archive.Entries[ii] = ep.CacheID()
-		}
-		onDisk.Archives[i] = archive
-		// memoryCachedArchiveFile{
-		// 	FileID:   a.File.CacheID(),
-		// 	EntryIDs: entryIDs,
-		// }
-	}
-
-	// 4. encode the repos, they reference files and need mapping
-	for i, r := range v.GitRepoSources {
-		repo := record.SerializedGitRepo{Branch: r.Branch, Commit: r.Commit, Tag: r.Tag, URL: r.URL}
-		repo.Files = make([]uint64, len(r.Files))
-		for ii, fp := range r.Files {
-			repo.Files[ii] = fp.CacheID()
-		}
-		onDisk.Repos[i] = repo
-		// memoryCachedGitSource{
-		// 	GitRepoSource: *r,
-		// 	FileIDs:       fileIds,
-		// }
-		// onDisk.Repos[i].GitRepoSource.Files = nil
-	}
-
-	// 5. encode the stat cache
-	statKeys := v.statCache.Keys()
-	for _, k := range statKeys {
-		sk := k.(CachedStatFingerprintKey)
-		fp, ok := v.statCache.Peek(k)
-		if !ok {
-			log.Println("cache miss on known stat key")
-			continue
-		}
-		f := fp.(*record.Fingerprint)
-		onDisk.StatCache[sk] = f.CacheID()
-	}
-
-	return &onDisk
-}
-
-func (v *fingerprintInMemoryCache) loadSerializedCache(onDisk *SerializedCache) error {
-	v.fingerprintsLock.Lock()
-	defer v.fingerprintsLock.Unlock()
-	v.filesLock.Lock()
-	defer v.filesLock.Unlock()
-	v.archivesLock.Lock()
-	defer v.archivesLock.Unlock()
-	v.reposLock.Lock()
-	defer v.reposLock.Unlock()
-
-	// 1. decode the fingerprints, they were directly encoded, but as a map instead of list
-	fpCount := len(onDisk.Fingerprints)
-	v.gitSHAIndex = make(map[hash.GitShaDigest]uint64, fpCount)
-	// v.gitSHAIndex2 = NewGitShaIndexArr()
-	v.Fingerprints = make([]*record.Fingerprint, fpCount)
-	for i, sf := range onDisk.Fingerprints {
-		id := uint64(i)
-		if id != sf.ID {
-			return errors.New("Mismatched fingerprint id")
-		}
-		fingerprint := sf.Fingerprint
-		fingerprint.SetCacheID(id)
-		v.Fingerprints[i] = &fingerprint
-		v.gitSHAIndex[fingerprint.GitSHA] = id
-		v.gitSHAFilter.Add(fingerprint.GitSHA)
-	}
-
-	// 2. decode the files, which are serialized using a different type
-	fileCount := len(onDisk.Files)
-	v.Files = make([]*record.File, fileCount)
-	for i, sf := range onDisk.Files {
-		id := uint64(i)
-		if id != sf.ID {
-			return errors.New("Mismatched file id")
-		}
-		// v.Files[i] = &onDisk.Files[i].File
-		v.Files[id] = &record.File{Fingerprint: v.Fingerprints[sf.Fingerprint], Path: sf.Path}
-		// v.Files[i].Fingerprint = v.Fingerprints[f.FingerprintID]
-		v.Files[id].SetCacheID(id)
-	}
-
-	// 3. encode the archives, they join files to other files
-	archiveCount := len(onDisk.Archives)
-	v.ArchiveFiles = make([]*record.ArchiveFile, archiveCount)
-	for i, sa := range onDisk.Archives {
-		id := uint64(i)
-		if id != sa.ID {
-			return errors.New("Mismatched archive id")
-		}
-		entries := make([]*record.File, len(sa.Entries))
-		for ii, eID := range sa.Entries {
-			entries[ii] = v.Files[eID]
-		}
-		archive := record.ArchiveFile{
-			File:    v.Files[sa.File],
-			Entries: entries,
-		}
-		archive.SetCacheID(id)
-		v.ArchiveFiles[id] = &archive
-		// v.ArchiveFiles[i].SetCacheID(uint64(i))
-	}
-
-	// 4. decode the repos
-	repoCount := len(onDisk.Repos)
-	v.GitRepoSources = make([]*record.GitRepoSource, repoCount)
-	for i, r := range onDisk.Repos {
-		entries := make([]*record.File, len(r.Files))
-		for ii, fid := range r.Files {
-			entries[ii] = v.Files[fid]
-		}
-		v.GitRepoSources[i] = &record.GitRepoSource{
-			Branch: r.Branch,
-			Commit: r.Commit,
-			Tag:    r.Tag,
-			URL:    r.URL,
-			Files:  entries,
-		}
-		// } onDisk.Repos[i].GitRepoSource
-		// v.GitRepoSources[i].Files = make([]*binprint.File, len(r.FileIDs))
-
-		v.GitRepoSources[i].SetCacheID(uint64(i))
-	}
-
-	// 5. decode the stat cache
-	for statKey, fpID := range onDisk.StatCache {
-		v.statCache.Add(statKey, v.Fingerprints[fpID])
-	}
-
-	return nil
-}
-
 // newCachedStatFingerprintKey takes an os.FileInfo to create a unique key based
 // on the inode, size, and mtime of the target file
 func (v *fingerprintInMemoryCache) newCachedStatFingerprintKey(fileInfo os.FileInfo) CachedStatFingerprintKey {
 	stat := fileInfo.Sys().(*syscall.Stat_t)
 	str := strconv.FormatInt(stat.Size, 36) + "," + strconv.FormatUint(stat.Ino, 36) + "," + strconv.FormatInt(fileInfo.ModTime().UnixNano(), 36)
 	return CachedStatFingerprintKey(str)
-}
-
-func (v *fingerprintInMemoryCache) MarshalBinary() ([]byte, error) {
-	var b bytes.Buffer
-	encoder := gob.NewEncoder(&b)
-
-	onDisk := v.NewSerializedCache()
-	if err := encoder.Encode(onDisk); err != nil {
-		return nil, err
-	}
-
-	return b.Bytes(), nil
-}
-
-func (v *fingerprintInMemoryCache) MarshalYAML() (interface{}, error) {
-	return v.NewSerializedCache(), nil
-}
-
-// UnmarshalBinary modifies the receiver so it must take a pointer receiver.
-func (v *fingerprintInMemoryCache) UnmarshalYAML(unmarshal func(interface{}) error) error {
-	onDisk := new(SerializedCache)
-
-	if err := unmarshal(onDisk); err != nil {
-		return err
-	}
-
-	return v.loadSerializedCache(onDisk)
-}
-
-// UnmarshalBinary modifies the receiver so it must take a pointer receiver.
-func (v *fingerprintInMemoryCache) UnmarshalBinary(data []byte) error {
-	onDisk := new(SerializedCache)
-
-	b := bytes.NewBuffer(data)
-	decoder := gob.NewDecoder(b)
-	if err := decoder.Decode(onDisk); err != nil {
-		return err
-	}
-
-	return v.loadSerializedCache(onDisk)
 }
 
 func (v *fingerprintInMemoryCache) Verify() error {
@@ -422,101 +180,6 @@ func (v *fingerprintInMemoryCache) GetStatFingerprint(stat os.FileInfo) *record.
 func (v *fingerprintInMemoryCache) PutStatFingerprint(stat os.FileInfo, fingerprint *record.Fingerprint) {
 	key := v.newCachedStatFingerprintKey(stat)
 	v.statCache.Add(key, fingerprint)
-}
-
-// PersistRememberedObjects takes the accumulated in-memory scan result database and serializes it to one or more files on disk.
-func (v *fingerprintInMemoryCache) PersistRememberedObjects() {
-	if err := v.Verify(); err != nil {
-		log.Println("In-memory cache is inconsistent, not persisting.", err)
-		return
-	}
-
-	onDisk := v.NewSerializedCache()
-
-	binFile, err := os.Create("fingerprint.gob")
-	if err != nil {
-		log.Println("Error persisting in-memory cache:", err)
-		return
-	}
-	snappyFile := snappy.NewBufferedWriter(binFile)
-	gobEncoder := gob.NewEncoder(snappyFile)
-	if err := gobEncoder.Encode(onDisk); err != nil {
-		log.Println("Error persisting in-memory cache:", err)
-	}
-	if err := snappyFile.Flush(); err != nil {
-		log.WithError(err).Print("Failed to flush serialized cache")
-	}
-	if err := snappyFile.Close(); err != nil {
-		log.WithError(err).Print("Failed to close snappy stream")
-	}
-	if err := binFile.Close(); err != nil {
-		log.WithError(err).Print("Failed to close gob file")
-	}
-
-	yamlFile, err := os.Create("fingerprint.yaml")
-	if err != nil {
-		log.Println("Error persisting in-memory cache:", err)
-		return
-	}
-	ymlEncoder := yaml.NewEncoder(yamlFile)
-	if err := ymlEncoder.Encode(onDisk); err != nil {
-		log.WithError(err).Print("Error encoding cache to yaml")
-		log.Println("Error persisting in-memory cache:", err)
-	}
-	if err := ymlEncoder.Close(); err != nil {
-		log.WithError(err).Print("Error flushing yaml encoder")
-	}
-	if err := yamlFile.Close(); err != nil {
-		log.WithError(err).Print("Error closing yaml file")
-	}
-}
-
-// RestoreRememberedObjects loads a persisted database from disk
-func RestoreRememberedObjects() record.Store {
-	onDisk := new(SerializedCache)
-	if useGob {
-		indexFile, err := os.Open("fingerprint.gob")
-		if err != nil {
-			log.Println("Error restoring in-memory cache:", err)
-			return nil
-		}
-		defer indexFile.Close()
-		index := snappy.NewReader(indexFile)
-		// index, err := gzip.NewReader(indexFile)
-		if err != nil {
-			log.Println("Error restoring in-memory cache:", err)
-			return nil
-		}
-		indexDecoder := gob.NewDecoder(index)
-		if err := indexDecoder.Decode(onDisk); err != nil {
-			log.Println("Error restoring in-memory cache:", err)
-			// resetCache()
-			return nil
-		}
-	} else {
-		indexFile, err := os.Open("fingerprint.yaml")
-		if err != nil {
-			log.Println("Error restoring in-memory cache:", err)
-			return nil
-		}
-		defer indexFile.Close()
-		indexDecoder := yaml.NewDecoder(indexFile)
-		if err := indexDecoder.Decode(onDisk); err != nil {
-			log.Println("Error restoring in-memory cache:", err)
-			// resetCache()
-			return nil
-		}
-	}
-
-	cache := newInMemoryCache()
-	cache.loadSerializedCache(onDisk)
-
-	if err := cache.Verify(); err != nil {
-		log.Println("Restore failed due to inconsistency:", err)
-		// resetCache()
-		return nil
-	}
-	return cache
 }
 
 // PutFingerprint ensures that the given binprint.Fingerprint is stored in
@@ -829,13 +492,4 @@ func (v *fingerprintInMemoryCache) FindArchiveFilesContainingFingerprint(fp *rec
 	// }
 
 	return directArchives
-}
-
-var logger = logrus.New()
-var log logrus.FieldLogger
-
-func init() {
-	log = logger.WithField("prefix", "cache")
-	logger.Formatter = new(prefixed.TextFormatter)
-	logger.Level = logrus.DebugLevel
 }
