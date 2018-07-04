@@ -37,6 +37,9 @@ import (
 // actually hashed anywhere. It appears that what Docker considers
 // content-addressable actually means a hash of a config file that lists a bunch
 // of randomly generated IDs :-(
+//
+// What hashing that is done falls under tarsum:
+// https://github.com/moby/moby/blob/master/pkg/tarsum/tarsum_spec.md
 
 type manifestEntry struct {
 	Config   string   `json:"Config"`
