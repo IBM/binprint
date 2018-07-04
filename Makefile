@@ -30,15 +30,15 @@ $(LIBGIT2PC): $(LIBGIT2)/CMakeLists.txt
 	mkdir -p $(@D) $(LIBGIT2)/install/lib
 	cd $(@D) && \
 		cmake -DTHREADSAFE=ON \
-	      -DBUILD_CLAR=OFF \
-		  -DUSE_SSH=OFF \
-		  -DUSE_HTTPS=OFF \
-		  -DCURL=OFF \
-		  -DBUILD_SHARED_LIBS=OFF \
-	      -DCMAKE_C_FLAGS=-fPIC \
-		  -DCMAKE_INSTALL_PREFIX=../install \
-		  -DCMAKE_BUILD_TYPE="MinSizeRel" \
-	      .. && \
+			-DBUILD_CLAR=OFF \
+			-DUSE_SSH=OFF \
+			-DUSE_HTTPS=OFF \
+			-DCURL=OFF \
+			-DBUILD_SHARED_LIBS=OFF \
+			-DCMAKE_C_FLAGS=-fPIC \
+			-DCMAKE_INSTALL_PREFIX=../install \
+			-DCMAKE_BUILD_TYPE="MinSizeRel" \
+		.. && \
 	  cmake --build . && \
 	  make install
 
