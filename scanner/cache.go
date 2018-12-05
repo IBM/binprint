@@ -16,6 +16,11 @@ func PersistRememberedObjects() {
 	cache.PersistRememberedObjects()
 }
 
+// GetStore returns the current backing store being used
+func GetStore() record.Store {
+	return cache
+}
+
 // RestoreRememberedObjects loads a previously persisted dump of the in-memory
 // store in to memory so that previous work does not need to be repeated.
 func RestoreRememberedObjects() {
