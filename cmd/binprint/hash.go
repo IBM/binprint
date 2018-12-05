@@ -27,10 +27,12 @@ var hashAllCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		for _, path := range args {
 			result := scanner.IdentifyFile(path)
-			if result == nil {
+			if result == nil || result.Fingerprint == nil {
 				continue
 			}
-			fmt.Printf("%s  %s\n", result.Fingerprint.String(), path)
+			for _, alg := range knownAlgorithms {
+				fmt.Printf("%s:%s  %s\n", alg, result.Fingerprint.GetDigest(alg), path)
+			}
 		}
 	},
 }
@@ -81,16 +83,22 @@ func mustHash(algorithm string, path string) hash.Digest {
 	return hasher.Digest()
 }
 
+var knownAlgorithms = [...]string{
+	"md5",
+	"sha1",
+	"sha256",
+	"sha384",
+	"sha512",
+	"git",
+	"hwy64",
+	"hwy128",
+	"hwy256",
+}
+
 func init() {
 	rootCmd.AddCommand(hashCmd)
 	hashCmd.AddCommand(hashAllCmd)
-	hashCmd.AddCommand(makeHashCommand("md5"))
-	hashCmd.AddCommand(makeHashCommand("sha1"))
-	hashCmd.AddCommand(makeHashCommand("sha256"))
-	hashCmd.AddCommand(makeHashCommand("sha384"))
-	hashCmd.AddCommand(makeHashCommand("sha512"))
-	hashCmd.AddCommand(makeHashCommand("git"))
-	hashCmd.AddCommand(makeHashCommand("hwy64"))
-	hashCmd.AddCommand(makeHashCommand("hwy128"))
-	hashCmd.AddCommand(makeHashCommand("hwy256"))
+	for _, alg := range knownAlgorithms {
+		hashCmd.AddCommand(makeHashCommand(alg))
+	}
 }

@@ -72,6 +72,8 @@ func (f Fingerprint) GetDigest(alg string) hash.Digest {
 	switch alg {
 	case "git", "gitsha":
 		return f.GitSHA
+	case "md5":
+		return f.MD5
 	case "sha1":
 		return f.SHA1
 	case "sha256":
@@ -80,11 +82,11 @@ func (f Fingerprint) GetDigest(alg string) hash.Digest {
 		return f.SHA384
 	case "sha512":
 		return f.SHA512
-	case "hwy64bp":
+	case "hwy64bp", "hwy64":
 		return f.Hwy64
-	case "hwy128bp":
+	case "hwy128bp", "hwy128":
 		return f.Hwy128
-	case "hwy256bp":
+	case "hwy256bp", "hwy256":
 		return f.Hwy256
 	default:
 		return nil
