@@ -23,6 +23,9 @@ snapcat: cmd/snapcat/main.go
 unused: $(LIBGIT2PC)
 	PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) unused ./...
 
+test:
+	go test --tags "static" -v ./...
+
 $(LIBGIT2)/CMakeLists.txt:
 	git submodule update --init $(@D)
 
