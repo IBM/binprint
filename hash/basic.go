@@ -4,7 +4,6 @@
 package hash
 
 import (
-	"fmt"
 	"hash"
 	"io"
 	"log"
@@ -34,10 +33,8 @@ func (sh BasicHasher) Digest() Digest {
 	// block until the digest is finished
 	d, ok := <-sh.Done()
 	if ok {
-		fmt.Printf("read from channel")
 		return d
 	}
-	fmt.Printf("channel was empty")
 	return sh.result
 }
 
