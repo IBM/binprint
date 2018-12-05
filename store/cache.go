@@ -22,17 +22,21 @@ import (
 type CachedStatFingerprintKey string
 
 type fingerprintInMemoryCache struct {
-	Fingerprints     []*record.Fingerprint
-	fingerprintsLock sync.Mutex
-	gitSHAIndex      map[hash.GitShaDigest]uint64
-	gitSHAFilter     *bloomfilter.Filter
-	Files            []*record.File
-	filesLock        sync.Mutex
-	GitRepoSources   []*record.GitRepoSource
-	reposLock        sync.Mutex
-	ArchiveFiles     []*record.ArchiveFile
-	archivesLock     sync.Mutex
-	statCache        *lru.ARCCache
+	Fingerprints          map[uint64]*record.Fingerprint
+	FingerprintsNextKey   uint64
+	fingerprintsLock      sync.Mutex
+	gitSHAIndex           map[hash.GitShaDigest]uint64
+	gitSHAFilter          *bloomfilter.Filter
+	Files                 map[uint64]*record.File
+	FilesNextKey          uint64
+	filesLock             sync.Mutex
+	GitRepoSources        map[uint64]*record.GitRepoSource
+	GitRepoSourcesNextKey uint64
+	reposLock             sync.Mutex
+	ArchiveFiles          map[uint64]*record.ArchiveFile
+	ArchiveFilesNextKey   uint64
+	archivesLock          sync.Mutex
+	statCache             *lru.ARCCache
 }
 
 // newCachedStatFingerprintKey takes an os.FileInfo to create a unique key based
@@ -98,13 +102,17 @@ func newInMemoryCache() *fingerprintInMemoryCache {
 		log.Println("Error initializing LRU/ARC cache(2048)")
 	}
 	cache := fingerprintInMemoryCache{
-		Files:          make([]*record.File, 0, 1024),
-		Fingerprints:   make([]*record.Fingerprint, 0, 1024),
-		gitSHAIndex:    make(map[hash.GitShaDigest]uint64, 100*1024),
-		gitSHAFilter:   bloomfilter.NewOptimal(100*1024, 0.000001),
-		GitRepoSources: make([]*record.GitRepoSource, 0, 1024),
-		ArchiveFiles:   make([]*record.ArchiveFile, 0, 1024),
-		statCache:      statCache,
+		Files:                 make(map[uint64]*record.File, 1024),
+		FilesNextKey:          1,
+		Fingerprints:          make(map[uint64]*record.Fingerprint, 1024),
+		FingerprintsNextKey:   1,
+		gitSHAIndex:           make(map[hash.GitShaDigest]uint64, 100*1024),
+		gitSHAFilter:          bloomfilter.NewOptimal(100*1024, 0.000001),
+		GitRepoSources:        make(map[uint64]*record.GitRepoSource, 1024),
+		GitRepoSourcesNextKey: 1,
+		ArchiveFiles:          make(map[uint64]*record.ArchiveFile, 1024),
+		ArchiveFilesNextKey:   1,
+		statCache:             statCache,
 	}
 	return &cache
 }
@@ -216,19 +224,11 @@ func (v *fingerprintInMemoryCache) PutFingerprint(fp *record.Fingerprint) *recor
 		return existing
 	}
 
-	v.Fingerprints = append(v.Fingerprints, fp)
-	id := uint64(len(v.Fingerprints) - 1)
+	v.Fingerprints[v.FingerprintsNextKey] = fp
+	id := v.FingerprintsNextKey
+	v.FingerprintsNextKey++
 	fp.SetCacheID(id)
 	v.gitSHAIndex[fp.GitSHA] = id
-	// v.gitSHAIndex2.Put(fp.GitSHA.Digest160, id)
-
-	// fmt.Printf("\nLogging new fingerprint: %#v\n%#v\nsame? %t\n", fp, fpp, fp == fpp)
-	// k, err := highwayhash.New64(hash.BinprintHighwayKey)
-	// if err != nil {
-	// 	panic(err)
-	// }
-	// k.Write(fp.GitSHA.Bytes())
-	// k.Sum(fp.GitSHA.Bytes[:])
 	v.gitSHAFilter.Add(fp.GitSHA)
 	return fp
 }
@@ -248,16 +248,10 @@ func (v *fingerprintInMemoryCache) GetFingerprintByGitSHA(gitSHA [20]byte) *reco
 		return nil
 	}
 
-	// id, ok := v.gitSHAIndex2.Get(gitDigest.Digest160)
 	id, ok := v.gitSHAIndex[gitDigest]
 	if ok {
 		return v.Fingerprints[id]
 	}
-	// for id := range v.fingerprints {
-	// 	if v.fingerprints[id].GitSHA == gitSHA {
-	// 		return &v.fingerprints[id]
-	// 	}
-	// }
 	return nil
 }
 
@@ -308,8 +302,9 @@ func (v *fingerprintInMemoryCache) PutFile(f *record.File) *record.File {
 		}
 	}
 	f.Fingerprint = v.PutFingerprint(f.Fingerprint)
-	v.Files = append(v.Files, f)
-	id := uint64(len(v.Files) - 1)
+	v.Files[v.FilesNextKey] = f
+	id := v.FilesNextKey
+	v.FilesNextKey++
 	f.SetCacheID(id)
 	return f
 }
@@ -366,10 +361,11 @@ func (v *fingerprintInMemoryCache) PutGitSource(r *record.GitRepoSource) *record
 		rememberedFiles[i] = v.PutFile(f)
 	}
 	r.Files = rememberedFiles
-	v.GitRepoSources = append(v.GitRepoSources, r)
-	id := len(v.GitRepoSources) - 1
-	v.GitRepoSources[id].SetCacheID(uint64(id))
-	return v.GitRepoSources[id]
+	id := v.GitRepoSourcesNextKey
+	v.GitRepoSourcesNextKey++
+	v.GitRepoSources[id] = r
+	r.SetCacheID(id)
+	return r
 }
 
 func (v *fingerprintInMemoryCache) FindGitSourceByURN(urn string) *record.GitRepoSource {
@@ -432,11 +428,12 @@ func (v *fingerprintInMemoryCache) PutArchiveFile(r *record.ArchiveFile) *record
 		rememberedFiles[i] = v.PutFile(f)
 	}
 	r.Entries = rememberedFiles
-	v.ArchiveFiles = append(v.ArchiveFiles, r)
-	id := len(v.ArchiveFiles) - 1
-	v.ArchiveFiles[id].SetCacheID(uint64(id))
+	id := v.ArchiveFilesNextKey
+	v.ArchiveFilesNextKey++
+	v.ArchiveFiles[id] = r
+	r.SetCacheID(uint64(id))
 	// log.Printf("Remembered archive: %+v\n", r.File)
-	return v.ArchiveFiles[id]
+	return r
 }
 
 func (v *fingerprintInMemoryCache) GetArchiveFile(f *record.File) *record.ArchiveFile {

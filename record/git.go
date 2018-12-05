@@ -21,6 +21,7 @@ type GitRepoSource struct {
 
 // SerializedGitRepo is an alternative form of GitRepoSource that uses numeric IDs instead of pointers
 type SerializedGitRepo struct {
+	ID     uint64
 	Commit hash.GitShaDigest
 	Tag    string   `yaml:",omitempty"`
 	Branch string   `yaml:",omitempty"`
