@@ -42,8 +42,7 @@ $(LIBGIT2PC): $(LIBGIT2)/CMakeLists.txt
 			-DCMAKE_INSTALL_PREFIX=../install \
 			-DCMAKE_BUILD_TYPE="MinSizeRel" \
 		.. && \
-	  cmake --build . && \
-	  make install
+	  cmake --build . --target install
 
 clean:
 	rm -f $(BINS) $(LIBGIT2PC)
