@@ -19,7 +19,7 @@ func NewAsyncHash(algorithm string, size int64) (AsyncHash, error) {
 	case "sha512":
 		return NewSHA512Hasher(), nil
 	case "git", "gitsha":
-		return NewGitShaHasher(size), nil
+		return NewGitShaHasher("blob", size), nil
 	case "hwy64":
 		return NewHighway64Hasher(), nil
 	case "hwy128":

@@ -92,7 +92,7 @@ func (gh *GitShaHasher) Close() error {
 }
 
 // NewGitShaHasher returns a hash.Hash that will compute a variant sha1 digest as though the input was a git blob object
-func NewGitShaHasher(size int64) *GitShaHasher {
+func NewGitShaHasher(oType string, size int64) *GitShaHasher {
 	header := bytes.Buffer{}
 	// git calculates all hashes using a common format:
 	//   <type><SP><length><0>
@@ -101,7 +101,7 @@ func NewGitShaHasher(size int64) *GitShaHasher {
 	//   <SP> is a literal space
 	//   length is a string of the decimal representation of the length of the object
 	//   <0> is a literal 0 byte (aka, terminating null)
-	header.WriteString(fmt.Sprintf("blob %d", size))
+	header.WriteString(fmt.Sprintf("%s %d", oType, size))
 	header.WriteByte(0)
 	h := GitShaHasher{size: size}
 	sha1Hash := sha1.New()

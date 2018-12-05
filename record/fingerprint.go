@@ -136,7 +136,7 @@ func (f *Fingerprint) CalculateSums(data io.Reader, size int64) error {
 	// 	return nil
 	// }
 	if f.GitSHA.IsZero() && f.Size >= 0 {
-		hashers = append(hashers, hash.NewGitShaHasher(f.Size))
+		hashers = append(hashers, hash.NewGitShaHasher("blob", f.Size))
 	}
 	if f.MD5.IsZero() {
 		hashers = append(hashers, hash.NewMD5Hasher())
